@@ -5,8 +5,6 @@ parallel problem. This library wraps pg-postgres in a way that enables a sandbox
 that runs each test in a transaction, so every single test can be run in
 isolation, and also in parallel.
 
-Currently unpublished, pending further testing.
-
 ## Requirements
 
 - `pg-promise@10.x` is a peer dependency.
