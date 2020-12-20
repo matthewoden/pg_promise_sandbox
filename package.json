@@ -1,0 +1,25 @@
+{
+  "name": "pg-promise-sandbox",
+  "version": "0.0.1",
+  "description": "A wrapper around pg-promise to run postgres test concurrently.",
+  "main": "index.js",
+  "scripts": {
+    "setup": "./bin/migrate",
+    "test": "mocha test --exit ./test/indexSpec.js"
+  },
+  "author": "Matthew Potter",
+  "license": "ISC",
+  "peerDependencies": {
+    "pg-promise": "10.x"
+  },
+  "devDependencies": {
+    "chai": "^4.2.0",
+    "chai-as-promised": "^7.1.1",
+    "mocha": "^8.2.1",
+    "sinon": "^9.2.2",
+    "pg-promise": "^10.8.1"
+  },
+  "dependencies": {
+    "uuid": "^8.3.2"
+  }
+}

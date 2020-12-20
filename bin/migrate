@@ -1,0 +1,10 @@
+#!/usr/bin/env node
+
+const db = require('../data/db')
+const fs = require('fs')
+const schema = fs.readFileSync('./data/schema.sql')
+
+;(async () => {
+  await db.query('drop table if exists concurrent')
+  await db.query(schema)
+})
