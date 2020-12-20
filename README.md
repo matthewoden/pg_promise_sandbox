@@ -1,9 +1,8 @@
 # PG Promise Sandbox
 
-An experiment with pg-postgres to turn database tests into an embarassingly
-parallel problem. This library wraps pg-postgres in a way that enables a sandbox
-that runs each test in a transaction, so every single test can be run in
-isolation, and also in parallel.
+An experiment with pg-postgres to turn database tests into an embarassingly parallel problem.
+
+This library provides an additional API to `pg-postgres` to enable running each test in a transaction, so every single test can be run in isolation, and also in parallel.
 
 ## Requirements
 
@@ -11,10 +10,7 @@ isolation, and also in parallel.
 
 ## Usage
 
-If you're already using pg-promise, then this library shouldn't change the way
-your app runs at all (see below for exceptions). I've used a proxy to copy every
-single property of pg-promise, allowing this to be a drop-in addition
-to any codebase.
+If you're already using pg-promise, then this library shouldn't change the way your app runs at all (see below for exceptions). I've used a proxy to copy every single property of pg-promise, allowing this to be a drop-in addition to any codebase.
 
 Two new functions are added to pg-promise's, and are needed to enable sandbox-mode:
 
@@ -24,8 +20,7 @@ Two new functions are added to pg-promise's, and are needed to enable sandbox-mo
 
 ### Wrapping PG Promise
 
-Simply pass in your existing pg-promise instance, and whether or not sandbox mode
-should be enabled.
+Simply pass in your existing pg-promise instance, and whether or not sandbox mode should be enabled.
 
 ```js
 const pgpromise = require("pg-promise")();
@@ -46,8 +41,7 @@ module.exports = pgSandbox({ pg, mode });
 
 ### Testing Example
 
-The following example could be used to run mocha tests with --parallel, or by
-spinning up multiple mocha instances (and multiple cores) via `find ./test --name='*Spec.js | xargs -P 4 mocha`
+The following example could be used to run mocha tests with --parallel, or by spinning up multiple mocha instances (and multiple cores) via `find ./test --name='*Spec.js | xargs -P 4 mocha`
 
 > Note: Slam your test-database responsibly.
 
@@ -74,8 +68,7 @@ describe('User registration', () => {
 })
 ```
 
-This could be even simpler. If you use a mocha setup file, you could set these
-functions globally, and omit the beforeEach entirely.
+This could be even simpler. If you use a mocha setup file, you could set these functions globally, and omit the beforeEach entirely.
 
 ```js
 const db = require("./my/db/client");
@@ -86,60 +79,45 @@ global.afterEach(() => db.restoreSandbox());
 
 ### When to use this plugin
 
-Use this when your application is truly stateless per request.
+Use this when your application
 
-If you need to rely on shared caches, or multiple databases for a single call,
-this libray may not work as intended. Consider how you might disable, or mock
-stateful functionality in your tests.
-
-In addition, there are two pg-promise methods that the wrapped API doesn't support
-well - `.txIf` and `.taskIf`.
-
-By default, these methods use a transaction, depending on whether or not the call
-is currently in a transaction. If everything is in a transaction by default,
-this obviously isn't going to function as expected.
+- has a LOT of postgres integration tests
+- is your application code is truly stateless.
+- doesn't care about whether a query is in a transaction or not
 
 As a general rule - when you can't use a sandbox, move the test to a new file,
-and test it seperately from everything else.
+and test serial operations seperately from everything else.
+
+#### Why test counts matter.
+
+If you only have a small number of tests, or very simple tests, the overhead for starting a parallel CI process might take as much time as running your tests serially.
+
+#### Why stateless?
+
+If your app hits multiple databases, like elasticsearch or redis, these will be shared across
+tests, and may interfere with concurrent testing.
+
+If you have an in-memory cache, you can probably get away with concurrent testing - possibly by creating a new cache per test.
+
+It's left to the reader to consider how you might refactor, or mock stateful functionality in your tests. But always prefer confidence in your tests, over speed.
+
+#### What's this about transactins?
+
+There are two pg-promise methods that the wrapped API doesn't support well - `.txIf` and `.taskIf`.
+
+By default, these methods use a transaction, depending on whether or not the call is currently in a transaction. Since this library wraps everything in a transaction by default, those queries obviously wont function as expected.
 
 ## Background
 
-When writing a database test, we often create a scenario with a number of set up
-queries, assert on our data's state, and then clean up our database for the
-next test.
+Node’s claim to fame is that it’s single-threaded concurrency model is super lightweight and perfect for network and IO heavy tasks. Yet the current state of database integration tests on node are this serial process of setup, assert, then teardown. We’re barely taking advantage of our runtime in our test environment.
 
-Similarly, when updating a database we use a transaction, grouping multiple queries
-together, and if all our queries resolve, we commit our changes. If we end up in
-bad state, we can roll it back.
+Plus, in our CI pipeline, this often means we have to wait on other jobs to finish before the next job can start.
 
-These are pretty similar operations. Our tests are basically just transactions
-except we roll back no matter what. So why not put our test code in a transaction?
-We get automatic cleanup, and our test data is fully isolated. If our app is also
-stateless, that means we can run all our database tests concurrently!
+Other, threaded languages have a workaround for this. When testing, they use nested transactions. Each test checks out a connection from the pool, spins up a transaction, and assigns that connection ownership to the test thread. All queries that originate from that thread use that transaction. When the test is done, they roll back the parent transaction. No data is committed. No tests share memory, and your tests can run as fast as your CI agent allows.
 
-We just have to create a transaction at the start of a test, inject our queries
-into that specific transaction, then rollback when our tests are done.
+While we can’t do that on node, with the `async_hooks` module introduced in Node 8, we can get pretty close. It provides just enough functionality to create an async stack trace, and determine if a process is running in the “promise chain” of another promise.
 
-Making this work is a little tricky. Postgres only sort-of allows for nested
-transactions. There's a top level transaction, and then named savepoints when
-within a transaction. So that means "nesting transactions" requires conditional
-rewriting of SQL.
-
-Foruntately, the pg-promise has a wonderful transactions API, allowing developers
-to write composable queries that don't need know if they're in a transaction or
-not.
-
-The next problem: how do we know which transaction to use? In a threaded
-language we could check out a database connection, start a transaction, and
-assign ownership of that transaction to a thread. Any query run in that
-thread would reuse that connection. But Node.js is single threaded, so all our
-connections are running in shared memory, and rotating in and out of the event
-loop.
-
-This issue can be resolved with async_hooks. It provides an API to trace async
-functions, granting callbacks that fire when a promise chain starts, with
-information around what process invoked it. Which means instead of threads, we
-can assign a transaction to a promise chain.
+I took that, and ran with it. I created a proxy wrapper for `pg-promise`, as it handles postgres transaction/savepoint model for rollbacks really well. The API lets developers compose queries without caring if it’s in a transaction or not (which is why the `txIf` and `taskIf` api exists - because sometimes you have to care). This allowed me to transaprently inject queries into a transaction without having to implement any changes to my codebase.
 
 ## Roadmap
 
